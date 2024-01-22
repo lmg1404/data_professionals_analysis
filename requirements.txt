@@ -76,6 +76,7 @@ prometheus-client         0.14.1
 prompt-toolkit            3.0.43
 psutil                    5.9.0
 pure-eval                 0.2.2
+pycountry                 23.12.11
 pycparser                 2.21
 Pygments                  2.15.1
 pyOpenSSL                 23.2.0
