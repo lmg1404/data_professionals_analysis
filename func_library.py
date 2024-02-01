@@ -303,3 +303,136 @@ class PPPDataTester:
         print(f"Updated metrics JSON file has been saved to {data_metrics_json_path}.")
 
 
+class AIJobsDataTester:
+    """
+    Class to test the AI Jobs data. This class is designed to verify the integrity and accuracy of AI Jobs data against expected metrics provided in a JSON file.
+    
+    The class is initialized with the path to the AI Jobs data file and the path to a JSON file containing the test metrics. It performs several checks, including dimensions of the data, count of missing values, and statistical analysis of the salary data.
+    
+    Initialization Parameters:
+    - data_filepath: Path to the CSV file containing AI Jobs data.
+    - test_metrics_filepath: Path to the JSON file containing the test metrics.
+    
+    JSON File Schema:
+    {
+      "AIJobs": {
+        "row_count": <int>,
+        "column_count": <int>,
+        "missing_vals_count": <int>,
+        "salary_stats": {
+          "mean": <float>,
+          "std": <float>,
+          "min": <float>,
+          "25%": <float>,
+          "50%": <float>,
+          "75%": <float>,
+          "max": <float>
+        }
+      }
+    }
+    
+    The JSON file must contain:
+    - row_count: Expected total number of rows in the AI Jobs data.
+    - column_count: Expected total number of columns in the AI Jobs data.
+    - missing_vals_count: Expected total count of missing (NaN) values across all columns.
+    - salary_stats: A dictionary of expected descriptive statistics for the 'salary' column, including mean, standard deviation, minimum, quartiles, and maximum values.
+    
+    The class methods include checks for the data's dimensions, the total count of missing values, and statistical analysis of the salary column against the expectations defined in the JSON file.
+    """
+
+    def __init__(self, data_filepath: str = r"data/ai-jobs_salaries.csv", test_metrics_filepath: str = r"data/data_test_metrics.json"):
+        """
+        The class is initialized with the path to the AI Jobs data file and the path to a JSON file containing the test metrics.
+        """
+        self.test_metrics_filepath = test_metrics_filepath
+        
+        # test existence of metrics file with pytest
+        assert os.path.exists(test_metrics_filepath), f"File {test_metrics_filepath} does not exist"
+
+        # test existence of file with pytest
+        assert os.path.exists(data_filepath), f"File {data_filepath} does not exist"
+        self.df = pd.read_csv(data_filepath)
+
+        #read json file into dictionary
+        metrics_dict = {}
+        with open(test_metrics_filepath, "r") as file:
+            metrics_contents = json.load(file)
+            metrics_dict = metrics_contents["AIJobs"]
+
+        self.expected_row_count = metrics_dict["row_count"]
+        self.expected_column_count = metrics_dict["column_count"]
+        self.expected_missing_vals_count = metrics_dict["missing_vals_count"]
+        self.expected_salary_stats = metrics_dict["salary_stats"]
+
+    def _test_dims(self):
+        rows, cols = self.df.shape
+        assert rows == self.expected_row_count, f"Row count does not match. Expected {self.expected_row_count}, got {rows}"
+        assert cols == self.expected_column_count, f"Column count does not match. Expected {self.expected_column_count}, got {cols}"
+
+    def _test_nan_count(self):
+        nan_count = self.df.isna().sum().sum()
+        assert nan_count == self.expected_missing_vals_count, f"Missing values count does not match. Expected {self.expected_missing_vals_count}, got {nan_count}"
+    
+    def _test_salary_stats(self):
+        salary_stats = self.df["salary"].describe()
+
+        stats_to_check = ['mean', 'std', 'min', '25%', '50%', '75%', 'max']
+        for stat in stats_to_check:
+            assert salary_stats[stat] == self.expected_salary_stats[stat], f"Salary {stat} does not match. Expected {self.expected_salary_stats[stat]}, got {salary_stats[stat]}"
+
+    def perform_tests(self):
+        self._test_dims()
+        self._test_nan_count()
+        self._test_salary_stats()
+        print(f"All tests passed for AI Jobs data.")
+
+    @staticmethod
+    def update_ai_jobs_metrics_json(ai_jobs_data_location, data_metrics_json_path):
+        """
+        Static method to update the JSON file with test metrics for the AI Jobs data. The method reads the AI Jobs data file, computes necessary metrics, and updates or creates a JSON file with these metrics under an "AIJobs" key.
+        
+        Parameters:
+        - ai_jobs_data_location: The file path to the AI Jobs data file.
+        - data_metrics_json_path: The file path to the JSON file where the metrics will be stored.
+        """
+
+        try:
+            if os.path.exists(data_metrics_json_path) and os.path.getsize(data_metrics_json_path) > 0:
+                with open(data_metrics_json_path, 'r') as json_file:
+                    metrics = json.load(json_file)
+            else:
+                raise FileNotFoundError  # Trigger the except block to initialize metrics
+        except (json.JSONDecodeError, FileNotFoundError):
+            metrics = {"AIJobs": {}}
+            print("Existing JSON file not found or malformed; initializing new structure.")
+        
+        # Assuming the AI Jobs data file structure is consistent
+        ai_jobs_filename = ai_jobs_data_location
+        if not os.path.exists(ai_jobs_filename):
+            raise FileNotFoundError(f"File {ai_jobs_filename} does not exist")
+
+        df = pd.read_csv(ai_jobs_filename)
+        
+        row_count, column_count = df.shape
+        missing_vals_count = int(df.isna().sum().sum())
+        salary_stats = df["salary"].describe().to_dict()
+        # Convert NumPy types to Python native types for JSON serialization
+        salary_stats = {key: float(value) for key, value in salary_stats.items()}
+        
+        metrics["AIJobs"] = {
+            "row_count": row_count,
+            "column_count": column_count,
+            "missing_vals_count": missing_vals_count,
+            "salary_stats": salary_stats
+        }
+
+        try:
+            json.dumps(metrics)  # Quick validation before writing
+        except TypeError as e:
+            print(f"Error serializing the metrics: {e}")
+            return
+
+        with open(data_metrics_json_path, 'w') as json_file:
+            json.dump(metrics, json_file, indent=4)
+        
+        print(f"Updated metrics JSON file has been saved to {data_metrics_json_path}.")
