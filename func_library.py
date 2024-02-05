@@ -4,8 +4,45 @@ import pytest
 import pycountry
 import numpy as np
 import pandas as pd
+from rapidfuzz import process
 from sklearn.preprocessing import MultiLabelBinarizer, LabelBinarizer
 
+YEARS_OF_INTEREST = ["2019", "2020", "2021", "2022", "2023"]
+
+def fuzzy_country_match(name, countries_list, threshold_distance=80):
+    """
+    Uses fuzzy matching to find the closest country name to the given name
+    Parameters:
+    - name (str): The name to match
+    - countries_list (list): A list of country names to match against
+    - threshold_distance (int): The minimum similarity score required to consider a match
+    Returns:
+    - str: The closest matching country name, or None if no match is found
+    """
+    closest_match = process.extractOne(name, countries_list)
+    # if the closest match is less than 80% similar, return None
+    if closest_match and closest_match[1] < threshold_distance:
+        return None
+    
+    return closest_match[0] if closest_match else None
+
+def get_country_code_from_name(country_name, countries):
+    """
+    Returns the ISO 3166-1 alpha-2 code for the given country name
+    """
+    try:
+        name_adjustment_map = {
+            "Turkey":"Türkiye"
+        }
+        country_name = name_adjustment_map[country_name] if country_name in name_adjustment_map.keys() else country_name
+        return pycountry.countries.lookup(country_name).alpha_2
+    except LookupError:
+        # Try fuzzy matching
+        closest_name = fuzzy_country_match(country_name, countries)
+        if closest_name:
+            return pycountry.countries.lookup(closest_name).alpha_2
+        else:
+            return None
 
 def get_raw_SO_dataframes(data_location: str) -> dict:
     """
@@ -17,6 +54,54 @@ def get_raw_SO_dataframes(data_location: str) -> dict:
         df = pd.read_csv(f"{data_location}/survey_results_public_{year}.csv")
         SO_dataframes[year] = {"df": df}
     return SO_dataframes
+
+def adjust_usd_to_2023_usd(old_usd: float, year: str) -> float:
+    """
+    Adjusts an amount of USD from a given year to its equivalent value in
+    December 2023 USD using the Consumer Price Index (CPI) inflation factor
+    for the given year. The CPI factors were retrieved from the US Bureau of
+    Labor Statistics website on February 1, 2024:
+    https://www.bls.gov/data/inflation_calculator.htm
+
+    Parameters:
+    - old_usd (float): The amount of USD to adjust.
+    - year (str): The year from which the amount is to be adjusted. Must be
+      a string representing a year for which the CPI inflation factor is known.
+
+    Returns:
+    - float: The adjusted amount in December 2023 USD.
+    """
+    cpi_inflation_factors = {
+        "2017": 1.24,
+        "2018": 1.22,
+        "2019": 1.19,
+        "2020": 1.18,
+        "2021": 1.10,
+        "2022": 1.03,
+        "2023": 1.00
+    }
+
+    return old_usd * cpi_inflation_factors[year]
+
+
+def read_ppp(csv_filepath="data/imf-dm-export-20240204.csv"):
+    """
+    creates a dataframe of the ppp factors
+    :param csv_filepath: the file path to the csv file
+    """
+    imf_ppp_df = pd.read_csv(csv_filepath)
+    imf_ppp_df = imf_ppp_df.drop(imf_ppp_df.index[0])
+    
+    # remove year columns that are not in years_of_interest]
+    cols_to_drop = [col for col in imf_ppp_df.columns if (col not in YEARS_OF_INTEREST) and (col.startswith("1") or col.startswith("2"))]
+    imf_ppp_df = imf_ppp_df.drop(columns=cols_to_drop)
+    
+    # create country column with ISO 3166-1 alpha-3 country codes
+    imf_ppp_df = imf_ppp_df.rename(columns={imf_ppp_df.columns[0]: 'country_full_name'})
+    country_list = [country.name for country in pycountry.countries]
+    get_country_code = lambda c: get_country_code_from_name(country_name=c, countries=country_list)
+    imf_ppp_df['country'] = imf_ppp_df['country_full_name'].apply(get_country_code)
+    return imf_ppp_df
 
 
 class StackOverflowDataTester:
@@ -210,7 +295,7 @@ class PPPDataTester:
         """
         The class is initialized with the path to the PPP data file and the path to a JSON file containing the test metrics.
         """
-        self.years_of_interest = ["2019", "2020", "2021", "2022"]
+        self.years_of_interest = YEARS_OF_INTEREST
         self.test_metrics_filepath = test_metrics_filepath
         
         # test existence of metrics file with pytest
@@ -280,7 +365,7 @@ class PPPDataTester:
 
         # Calculate sums for years of interest
         year_sums = {}
-        for year in ["2019", "2020", "2021", "2022"]:
+        for year in YEARS_OF_INTEREST:
             if year in df.columns:
                 year_sums[year] = float(df[year].sum())
             else:
@@ -446,7 +531,7 @@ class StackOverflowData:
     """
 
     @staticmethod
-    def make_aggregate_df(only_data_science_devs=False) -> (pd.DataFrame, list, list):
+    def generate_aggregate_df(only_data_science_devs=True) -> (pd.DataFrame, list, list):
         """
         Reads CSVs and gets the numbe of data professionals. Any empty values are dropped from job title and 
         salary so we will always have data. Other columns may have nans.
@@ -471,8 +556,7 @@ class StackOverflowData:
         Outputs: tuple(pd.DataFrame, list[str], list[str])
         """
 
-        country_abbreviations_1 = {country.name: country.alpha_3 for country in pycountry.countries}
-        country_abbreviations_2 = {country.official_name: country.alpha_3 for country in pycountry.countries}
+
         frames = {}
         stack_o_files = os.listdir("data/stack_overflow/")
         for file in stack_o_files:
@@ -494,15 +578,18 @@ class StackOverflowData:
                 df[f"{stan}wanttoworkwith"] = df[f"{stan}wanttoworkwith"].fillna(value="Empty")
 
             # standardize some country names, now they should match with Kaggle dataset
-            df["country"] = df["country"].replace(country_abbreviations_1)
-            df["country"] = df["country"].replace(country_abbreviations_2)
+            df['original_country'] = df['country'].copy()
+            country_list = [country.name for country in pycountry.countries]
+            get_country_code = lambda c: get_country_code_from_name(country_name=c, countries=country_list)
+            df["country"] = df["country"].apply(get_country_code)
 
             # we have some numbers so we can't just do entire df
             df[['edlevel', 'orgsize']] = df[['edlevel', 'orgsize']].fillna(value="nan")
             df['orgsize'] = df['orgsize'].replace({'I donâ\x80\x99t know': 'IDK'})
             
             df = df.dropna(subset=["devtype", "convertedcompyearly"])
-            df = df[df["devtype"].str.contains("data", case=False)]
+            if only_data_science_devs:
+                df = df[df["devtype"].str.contains("data", case=False)]
             df["count"] = [1] * len(df) # this is for our groupby so that we can say count > cull when we sum or count
             df["year"] = [year] * len(df)
             frames[f"df_data_{year}"] = df
@@ -520,11 +607,6 @@ class StackOverflowData:
         df, employment = StackOverflowData.encode_devtype(df)
         skills = [col for col in df.columns if any(substr in col for substr in ['lg', 'db', 'pf', 'wf', 'mt'])]
         
-        # if we only want data science devs we reduce the dataframe to only those who have at least a 1 in the data science columns
-        if only_data_science_devs: #TODO Can we do this earlier in the function and save time on cleaning data we are unconcerned about?
-            data_science_jobs_cols = ["Data scientist or machine learning specialist", "Data or business analyst", "Engineer, data"]
-            df = df[df[data_science_jobs_cols].sum(axis=1) > 0] # eliminate rows where no data science job is listed by summing the columns and checking if the sum is greater than 0
-
         return df, skills, employment
 
     @staticmethod
@@ -693,24 +775,6 @@ class StackOverflowData:
         return df, new_cols
     
 
-def read_ppp() -> pd.DataFrame:
-    """
-    Reads PPP csv and returns resulting data frame
-    Data Manipulations:
-    - Only use years since we're not going to use anything before unless we go historic route
-    - Fill nans with string type Null
-    - - thought process is to us other functions that will detect str type and throw an error
-    - - if nan operation will probably go through, so doing isinstance == str would be best probably
-    - Also index columns are the country code, should match to the PyCountry library
-    
-    Inputs: None
-    Output: pd.DataFrame
-    """
-    years = ["2019", "2020", "2021", "2022"]
-    ppp = pd.read_csv("data/ppp.csv", header=2, index_col="Country Code")[years]
-    # ppp = ppp.fillna("Null") # this way we can control the type, so we can create a function that checks type before anything else
-    return ppp
-
 
 def adjust_usd_to_2023_usd(old_usd: float, year: str) -> float:
     """
@@ -739,3 +803,73 @@ def adjust_usd_to_2023_usd(old_usd: float, year: str) -> float:
     }
 
     return old_usd * cpi_inflation_factors[year]
+
+
+class AISalariesData:
+    """
+    Class to hold the AI Salaries data and perform various operations on it.
+    """
+    
+    @staticmethod
+    def generate_df(csv_filepath: str = r"data/ai-jobs_salaries.csv") -> pd.DataFrame:
+        """
+        Reads the salaries from ai-net and returns them into a dataframe
+        Data Manipulation:
+        - Change 2 letter country names into 3 letter names for uniformity
+        - Map above function in job_title to simpler names
+        - Only taking 2020 - 2023, we have no data on 2024
+        
+        Input: None
+        Output: pd.DataFrame
+        """
+        salaries = pd.read_csv(csv_filepath)
+        country_abbreviations = {country.alpha_2: country.alpha_3 for country in pycountry.countries}
+        mapping = AISalariesData.process_job_titles(salaries)
+        
+        salaries[["employee_residence", "company_location"]] = salaries[["employee_residence", "company_location"]].replace(country_abbreviations)
+        salaries["job_title"] = salaries["job_title"].replace(mapping)
+        salaries = salaries[salaries["work_year"] < 2024]
+        
+        return salaries
+    
+    @staticmethod
+    def process_job_titles(salaries_df: pd.DataFrame) -> dict:
+        """
+        Helper function that is just a for loop that goes through unique job titles and assigns a basic name
+
+        Input: pd.DataFrame
+        Output: dict{str: str}
+        """
+        mapping = {}
+        for job in list(salaries_df["job_title"].unique()):
+            if (short := "Analyst") in job:
+                mapping[job] = short.lower()
+        
+            elif (short := "Engineer") in job:
+                mapping[job] = short.lower() + "_other"
+                
+            elif (short := "Data Scientist") in job or "Data Science" in job:
+                    mapping[job] = '_'.join(short.lower().split(" "))
+                
+            elif "Architect" in job:
+                mapping[job] = "systems_architect"
+        
+            elif "Manager" in job:
+                mapping[job] = "management"
+        
+            elif (short := "Developer") in job:
+                mapping[job] = short.lower()
+                
+            elif "math" in job.lower() or "stat" in job.lower():
+                mapping[job] = "mathematician_statistician"
+                
+            else:
+                mapping[job] = "scientist_other"
+        return mapping
+    
+
+if __name__ == "__main__":
+    stack_overflow, skills_list, employments = StackOverflowData.generate_aggregate_df(only_data_science_devs=True)
+    stack_overflow.shape
+    ppp_df = read_ppp()
+    print("completed")
