@@ -32,7 +32,8 @@ def get_country_code_from_name(country_name, countries):
     """
     try:
         name_adjustment_map = {
-            "Turkey":"Türkiye"
+            "Turkey":"Türkiye",
+            "Isle of Man": "United Kingdom",
         }
         country_name = name_adjustment_map[country_name] if country_name in name_adjustment_map.keys() else country_name
         return pycountry.countries.lookup(country_name).alpha_2
@@ -49,8 +50,7 @@ def get_raw_SO_dataframes(data_location: str) -> dict:
     Returns a dictionary of raw dataframes for each year of Stack Overflow survey data
     """
     SO_dataframes = {}
-    for year in range(2020, 2023):
-        year = str(year)
+    for year in YEARS_OF_INTEREST:
         df = pd.read_csv(f"{data_location}/survey_results_public_{year}.csv")
         SO_dataframes[year] = {"df": df}
     return SO_dataframes
@@ -102,6 +102,49 @@ def read_ppp(csv_filepath="data/imf-dm-export-20240204.csv"):
     get_country_code = lambda c: get_country_code_from_name(country_name=c, countries=country_list)
     imf_ppp_df['country'] = imf_ppp_df['country_full_name'].apply(get_country_code)
     return imf_ppp_df
+
+
+def get_2023_usd_equivalent(year: str, country_code: str, salary_val, ppp_df: pd.DataFrame):
+    """
+    Get the equivalent salary in 2023 USD for a given year and country code
+    :param year: year of the salary
+    :param country_code: country code of the salary
+    :param salary_val: salary value
+    :param ppp_df: DataFrame with OECD PPP values
+    :return: equivalent salary in 2023 USD
+    """
+    usd_2023_equivalent = np.nan
+    
+    try:
+        if country_code == 'US':
+            usd_equivalent = salary_val
+        else:
+            # get the ppp value for the country and year
+            ppp_values = ppp_df.loc[ppp_df['country'] == country_code, year].values
+            # if the ppp value is not found, return NaN
+            ppp_val = float(ppp_values[0]) if len(ppp_values) > 0 else np.nan
+            if np.isnan(ppp_val):
+                print(f"Country code {country_code} or year {year} not found in the PPP DataFrame") # for debugging
+                return np.nan
+            
+            usd_equivalent = salary_val / ppp_val
+        usd_2023_equivalent = adjust_usd_to_2023_usd(usd_equivalent, year)
+    
+    except Exception as e:
+        # if the exception is that the country code or year is not in the ppp_df then return NaN
+        if isinstance(e, KeyError):
+            print(f"Country code {country_code} or year {year} not found in the PPP DataFrame") # for debugging
+            pass
+
+        # if the exception is that the ppp_value is not a number then return NaN
+        if isinstance(e, ValueError):
+            print(f"Salary value {salary_val} is not a number") # for debugging
+            pass
+
+        else:
+            raise e
+ 
+    return usd_2023_equivalent
 
 
 class StackOverflowDataTester:
@@ -566,11 +609,19 @@ class StackOverflowData:
             # standardize compensation columns
             if 'ConvertedComp' in df.columns:
                 df = df.rename(columns={'ConvertedComp': 'ConvertedCompYearly'})
-
+            
+            df.columns = df.columns.str.lower()
+            
+            # drop rows with missing values in devtype and salary columns
+            df = df.dropna(subset=["devtype", "convertedcompyearly"])
+            
+            # filter for only data science professionals
+            if only_data_science_devs:
+                df = df[df["devtype"].str.contains("data", case=False)]
+            
             # standardize some columns
             # using camel case resulted in errors with webframe where sometimes F was capitalized
             standard = ["language", "database", "platform", "webframe", "misctech"]
-            df.columns = df.columns.str.lower()
             for stan in standard:
                 if f"{stan}workedwith" in df.columns:
                     df = df.rename(columns={f'{stan}workedwith': f'{stan}haveworkedwith', f'{stan}desirenextyear':f'{stan}wanttoworkwith'})
@@ -587,9 +638,7 @@ class StackOverflowData:
             df[['edlevel', 'orgsize']] = df[['edlevel', 'orgsize']].fillna(value="nan")
             df['orgsize'] = df['orgsize'].replace({'I donâ\x80\x99t know': 'IDK'})
             
-            df = df.dropna(subset=["devtype", "convertedcompyearly"])
-            if only_data_science_devs:
-                df = df[df["devtype"].str.contains("data", case=False)]
+            
             df["count"] = [1] * len(df) # this is for our groupby so that we can say count > cull when we sum or count
             df["year"] = [year] * len(df)
             frames[f"df_data_{year}"] = df
@@ -775,39 +824,10 @@ class StackOverflowData:
         return df, new_cols
     
 
-
-def adjust_usd_to_2023_usd(old_usd: float, year: str) -> float:
-    """
-    Adjusts an amount of USD from a given year to its equivalent value in
-    December 2023 USD using the Consumer Price Index (CPI) inflation factor
-    for the given year. The CPI factors were retrieved from the US Bureau of
-    Labor Statistics website on February 1, 2024:
-    https://www.bls.gov/data/inflation_calculator.htm
-
-    Parameters:
-    - old_usd (float): The amount of USD to adjust.
-    - year (str): The year from which the amount is to be adjusted. Must be
-      a string representing a year for which the CPI inflation factor is known.
-
-    Returns:
-    - float: The adjusted amount in December 2023 USD.
-    """
-    cpi_inflation_factors = {
-        "2017": 1.24,
-        "2018": 1.22,
-        "2019": 1.19,
-        "2020": 1.18,
-        "2021": 1.10,
-        "2022": 1.03,
-        "2023": 1.00
-    }
-
-    return old_usd * cpi_inflation_factors[year]
-
-
 class AISalariesData:
     """
     Class to hold the AI Salaries data and perform various operations on it.
+    Based on data from https://ai-jobs.net/salaries/download/
     """
     
     @staticmethod
@@ -822,15 +842,12 @@ class AISalariesData:
         Input: None
         Output: pd.DataFrame
         """
-        salaries = pd.read_csv(csv_filepath)
-        country_abbreviations = {country.alpha_2: country.alpha_3 for country in pycountry.countries}
-        mapping = AISalariesData.process_job_titles(salaries)
+        salaries_df = pd.read_csv(csv_filepath)
+        mapping = AISalariesData.process_job_titles(salaries_df)
+        salaries_df["job_title"] = salaries_df["job_title"].replace(mapping)
+        salaries_df = salaries_df[salaries_df["work_year"] < 2024]
         
-        salaries[["employee_residence", "company_location"]] = salaries[["employee_residence", "company_location"]].replace(country_abbreviations)
-        salaries["job_title"] = salaries["job_title"].replace(mapping)
-        salaries = salaries[salaries["work_year"] < 2024]
-        
-        return salaries
+        return salaries_df
     
     @staticmethod
     def process_job_titles(salaries_df: pd.DataFrame) -> dict:
@@ -843,7 +860,7 @@ class AISalariesData:
         mapping = {}
         for job in list(salaries_df["job_title"].unique()):
             if (short := "Analyst") in job:
-                mapping[job] = short.lower()
+                mapping[job] = short.lower() #TODO add AI and machine learning positions
         
             elif (short := "Engineer") in job:
                 mapping[job] = short.lower() + "_other"
@@ -870,6 +887,14 @@ class AISalariesData:
 
 if __name__ == "__main__":
     stack_overflow, skills_list, employments = StackOverflowData.generate_aggregate_df(only_data_science_devs=True)
-    stack_overflow.shape
     ppp_df = read_ppp()
-    print("completed")
+    stack_overflow.head(20)
+    
+    ai_salaries_df = AISalariesData.generate_df()
+    ai_jobs_converter = lambda row: get_2023_usd_equivalent(year=str(row["work_year"]),
+                                                            country_code=row["company_location"],
+                                                            salary_val=row["salary"],
+                                                            ppp_df=ppp_df)
+    ai_salaries_df["usd_2023"] = ai_salaries_df.apply(ai_jobs_converter, axis=1)
+    ai_salaries_df["usd_2023"].describe()
+
