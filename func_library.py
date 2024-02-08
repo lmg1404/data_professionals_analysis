@@ -35,12 +35,12 @@ def get_country_code_from_name(country_name, countries):
             "Turkey":"Türkiye"
         }
         country_name = name_adjustment_map[country_name] if country_name in name_adjustment_map.keys() else country_name
-        return pycountry.countries.lookup(country_name).alpha_2
+        return pycountry.countries.lookup(country_name).alpha_3
     except LookupError:
         # Try fuzzy matching
         closest_name = fuzzy_country_match(country_name, countries)
         if closest_name:
-            return pycountry.countries.lookup(closest_name).alpha_2
+            return pycountry.countries.lookup(closest_name).alpha_3
         else:
             return None
 
@@ -82,6 +82,14 @@ def adjust_usd_to_2023_usd(old_usd: float, year: str) -> float:
     }
 
     return old_usd * cpi_inflation_factors[year]
+
+def ppp_factor(country: str, year: str, ppp: pd.DataFrame) -> float:
+    try:
+        factor = float(ppp.loc[country, year])
+    except:
+        factor = ppp.loc[country, year].min().value()
+    
+    return factor
 
 
 def read_ppp(csv_filepath="data/imf-dm-export-20240204.csv"):
@@ -774,35 +782,6 @@ class StackOverflowData:
         df[new_cols] = df[new_cols].astype('int8')
         return df, new_cols
     
-
-
-def adjust_usd_to_2023_usd(old_usd: float, year: str) -> float:
-    """
-    Adjusts an amount of USD from a given year to its equivalent value in
-    December 2023 USD using the Consumer Price Index (CPI) inflation factor
-    for the given year. The CPI factors were retrieved from the US Bureau of
-    Labor Statistics website on February 1, 2024:
-    https://www.bls.gov/data/inflation_calculator.htm
-
-    Parameters:
-    - old_usd (float): The amount of USD to adjust.
-    - year (str): The year from which the amount is to be adjusted. Must be
-      a string representing a year for which the CPI inflation factor is known.
-
-    Returns:
-    - float: The adjusted amount in December 2023 USD.
-    """
-    cpi_inflation_factors = {
-        "2017": 1.24,
-        "2018": 1.22,
-        "2019": 1.19,
-        "2020": 1.18,
-        "2021": 1.10,
-        "2022": 1.03,
-        "2023": 1.00
-    }
-
-    return old_usd * cpi_inflation_factors[year]
 
 
 class AISalariesData:
