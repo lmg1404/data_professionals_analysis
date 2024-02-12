@@ -11,6 +11,16 @@ from sklearn.preprocessing import MultiLabelBinarizer, LabelBinarizer
 
 YEARS_OF_INTEREST = ["2019", "2020", "2021", "2022", "2023"]
 
+COLOR_THEME = {
+    'text': '#2E282A', # Raisin Black
+    'background': '#FFE4E1', # Misty Rose
+    'primary': '#9DBF9E', # Cambridge Blue
+    'secondary': '#D5A021', # Goldenrod
+    'light_accent': '#7FB7BE', # Moonstone Blue
+    'bold': '#BC2C1A', # Engineer's Red
+    'alt_background': '#C3B1E1' # Wisteria
+}
+
 def fuzzy_country_match(name, countries_list, threshold_distance=80):
     """
     Uses fuzzy matching to find the closest country name to the given name
@@ -65,12 +75,13 @@ def get_currencies_for_country(country_code):
             if isinstance(e, KeyError):
                 print(f"Country code {country_code} not found in pycountry")
                 return currencies
-    
-
+                            
 @lru_cache(maxsize=None)
 def get_currencies_for_country_cached(location):
+    """
+    Just a wrapper around get_currencies_for_country to cache the results
+    """
     return get_currencies_for_country(location)
-
 
 def get_country_code_from_name(country_name, countries):
     """
@@ -94,6 +105,8 @@ def get_country_code_from_name(country_name, countries):
 def get_raw_SO_dataframes(data_location: str) -> dict:
     """
     Returns a dictionary of raw dataframes for each year of Stack Overflow survey data
+    :param data_location: the location of the survey data
+    :return: a dictionary of raw dataframes for each year of Stack Overflow survey data
     """
     SO_dataframes = {}
     for year in YEARS_OF_INTEREST:
@@ -102,7 +115,15 @@ def get_raw_SO_dataframes(data_location: str) -> dict:
     return SO_dataframes
 
 def usd_exchanged_to_currency(usd_amount, year, country_alpha_2, rates_df: pd.DataFrame, missing_default = np.nan):
-
+    """
+    This is used to convert a given amount in USD to a given currency
+    :param usd_amount: the amount in USD
+    :param year: the year of the exchange rate
+    :param country_alpha_2: the ISO 3166-1 alpha-2 country code
+    :param rates_df: the dataframe of exchange rates
+    :param missing_default: the default value to return if the exchange rate is not found
+    :return: the equivalent amount in the given currency
+    """
     if country_alpha_2 == 'US':
         return usd_amount
 
@@ -134,6 +155,13 @@ def currency_exchanged_to_usd(amount, year:str, currency_code, rates_df: pd.Data
 def exchange_currency_to_country(amount, year:str, from_currency, to_country, rates_df: pd.DataFrame, missing_default = np.nan):
     """
     This function takes in a amount converts agiven currency to a the currency of a given country, to_country. 
+    :param amount: the amount in the from_currency
+    :param year: the year of the exchange rate
+    :param from_currency: the currency code of the amount
+    :param to_country: the ISO 3166-1 alpha-2 country code
+    :param rates_df: the dataframe of exchange rates
+    :param missing_default: the default value to return if the exchange rate is not found
+    :return: the equivalent amount in the currency of the to_country
     """
     if not to_country:
         return missing_default
@@ -181,6 +209,8 @@ def adjust_usd_to_2023_usd(old_usd: float, year: str) -> float:
 def generate_exchange_rates_df(imf_data_filepath = 'data/DP_LIVE_07022024070906417.csv'):
     """
     OECD (2024), Exchange rates (indicator). doi: 10.1787/037ed317-en (Accessed on 06 February 2024)
+    :param imf_data_filepath: the file path to the csv file
+    :return: a dataframe of the exchange rates
     """
     exchange_rate_df = pd.read_csv(imf_data_filepath)
     exchange_rate_df.columns = exchange_rate_df.columns.str.lower()
@@ -197,6 +227,7 @@ def read_ppp(csv_filepath="data/imf-dm-export-20240204.csv"):
     """
     creates a dataframe of the ppp factors
     :param csv_filepath: the file path to the csv file
+    :return: a dataframe of the ppp factors
     """
     imf_ppp_df = pd.read_csv(csv_filepath)
     imf_ppp_df = imf_ppp_df.drop(imf_ppp_df.index[0])
@@ -225,7 +256,7 @@ def get_2023_usd_equivalent(year: str, country_code: str, salary_val, ppp_df: pd
     usd_2023_equivalent = np.nan
     
     try:
-        if country_code.upper() == 'US':
+        if country_code == 'US':
             usd_equivalent = salary_val
         else:
             # get the ppp value for the country and year
@@ -247,6 +278,8 @@ def get_2023_usd_equivalent(year: str, country_code: str, salary_val, ppp_df: pd
 
         # if the exception is that the ppp_value is not a number then return NaN
         if isinstance(e, ValueError):
+            if 'has dtype incompatible with int64' in str(e):
+                print("Caught the specific error: ", e)
             print(f"Salary value {salary_val} is not a number") # for debugging
             try:
                 salary_val = float(salary_val)
@@ -259,6 +292,13 @@ def get_2023_usd_equivalent(year: str, country_code: str, salary_val, ppp_df: pd
  
     return usd_2023_equivalent
 
+def abbreviate_salary(amount):
+    if amount >= 1e6:
+        return '${:,.1f}M'.format(amount / 1e6)
+    elif amount >= 1e3:
+        return '${:,.0f}k'.format(amount / 1e3)
+    else:
+        return '${:,.0f}'.format(amount)
 
 class StackOverflowDataTester:
     """
@@ -403,6 +443,7 @@ class StackOverflowDataTester:
         try:
             json.dumps(metrics)  # Quick validation before writing
         except TypeError as e:
+            
             print(f"Error serializing the metrics: {e}")
             return
 
