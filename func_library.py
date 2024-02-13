@@ -4,10 +4,22 @@ import pytest
 import pycountry
 import numpy as np
 import pandas as pd
+from countryinfo import CountryInfo
+from functools import lru_cache
 from rapidfuzz import process
 from sklearn.preprocessing import MultiLabelBinarizer, LabelBinarizer
 
 YEARS_OF_INTEREST = ["2019", "2020", "2021", "2022", "2023"]
+
+COLOR_THEME = {
+    'text': '#2E282A', # Raisin Black
+    'background': '#FFE4E1', # Misty Rose
+    'primary': '#9DBF9E', # Cambridge Blue
+    'secondary': '#D5A021', # Goldenrod
+    'light_accent': '#7FB7BE', # Moonstone Blue
+    'bold': '#BC2C1A', # Engineer's Red
+    'alt_background': '#C3B1E1' # Wisteria
+}
 
 def fuzzy_country_match(name, countries_list, threshold_distance=80):
     """
@@ -26,34 +38,145 @@ def fuzzy_country_match(name, countries_list, threshold_distance=80):
     
     return closest_match[0] if closest_match else None
 
+def convert_country_alpha3_to_alpha2(alpha_3_code, default=None):
+    country = pycountry.countries.get(alpha_3=alpha_3_code)
+    if country:
+        return country.alpha_2
+    else:
+        return default
+    
+def convert_country_alpha2_to_alpha3(alpha_2_code, default=None):
+    country = pycountry.countries.get(alpha_2=alpha_2_code)
+    if country:
+        return country.alpha_3
+    else:
+        return default
+
+
+def get_currencies_for_country(country_code):
+    """Get currency code from country code"""
+    currencies = []
+    try:
+        currencies = CountryInfo(country_code).currencies()
+        return currencies
+    except KeyError:
+        
+        # if country code is not found in pycountry, try to convert it to country name and 
+        # attempt to get currency again.
+        try:
+            if len(country_code) == 3:
+                country_code = convert_country_alpha3_to_alpha2(country_code)
+            
+            country = pycountry.countries.get(alpha_2=country_code)
+            currencies = CountryInfo(country.name).currencies()
+            return currencies
+        
+        except Exception as e:
+            if isinstance(e, KeyError):
+                print(f"Country code {country_code} not found in pycountry")
+                return currencies
+                            
+@lru_cache(maxsize=None)
+def get_currencies_for_country_cached(location):
+    """
+    Just a wrapper around get_currencies_for_country to cache the results
+    """
+    return get_currencies_for_country(location)
+
 def get_country_code_from_name(country_name, countries):
     """
     Returns the ISO 3166-1 alpha-2 code for the given country name
     """
     try:
         name_adjustment_map = {
-            "Turkey":"Türkiye"
+            "Turkey":"Türkiye",
+            "Isle of Man": "United Kingdom",
         }
         country_name = name_adjustment_map[country_name] if country_name in name_adjustment_map.keys() else country_name
-        return pycountry.countries.lookup(country_name).alpha_3
+        return pycountry.countries.lookup(country_name).alpha_2
     except LookupError:
         # Try fuzzy matching
         closest_name = fuzzy_country_match(country_name, countries)
         if closest_name:
-            return pycountry.countries.lookup(closest_name).alpha_3
+            return pycountry.countries.lookup(closest_name).alpha_2
         else:
             return None
 
 def get_raw_SO_dataframes(data_location: str) -> dict:
     """
     Returns a dictionary of raw dataframes for each year of Stack Overflow survey data
+    :param data_location: the location of the survey data
+    :return: a dictionary of raw dataframes for each year of Stack Overflow survey data
     """
     SO_dataframes = {}
-    for year in range(2020, 2023):
-        year = str(year)
+    for year in YEARS_OF_INTEREST:
         df = pd.read_csv(f"{data_location}/survey_results_public_{year}.csv")
         SO_dataframes[year] = {"df": df}
     return SO_dataframes
+
+def usd_exchanged_to_currency(usd_amount, year, country_alpha_2, rates_df: pd.DataFrame, missing_default = np.nan):
+    """
+    This is used to convert a given amount in USD to a given currency
+    :param usd_amount: the amount in USD
+    :param year: the year of the exchange rate
+    :param country_alpha_2: the ISO 3166-1 alpha-2 country code
+    :param rates_df: the dataframe of exchange rates
+    :param missing_default: the default value to return if the exchange rate is not found
+    :return: the equivalent amount in the given currency
+    """
+    if country_alpha_2 == 'US':
+        return usd_amount
+
+    exchange_rate_match = rates_df[(rates_df['year'] == year) & (rates_df['country'] == country_alpha_2)]
+    if exchange_rate_match.empty:
+        return missing_default
+    # Convert the amount to the specified currency
+    exchange_rate = exchange_rate_match['value'].values[0]
+    amount_in_currency = usd_amount * exchange_rate
+    return amount_in_currency
+
+def currency_exchanged_to_usd(amount, year:str, currency_code, rates_df: pd.DataFrame, missing_default = np.nan):
+    """
+    This function takes in a amount in a currency, a year, a currency code, and a dataframe of exchange rates.
+    It returns the equivalent amount in USD.
+    """
+    if currency_code == 'USD':
+        return amount
+
+    exchange_rate_match = rates_df[(rates_df['year'] == year) & (rates_df['currency_code'] == currency_code)]
+    if exchange_rate_match.empty:
+        return missing_default
+    
+    # Convert the amount to the specified currency
+    exchange_rate = exchange_rate_match['value'].values[0]
+    amount_in_usd = amount / exchange_rate
+    return amount_in_usd
+
+def exchange_currency_to_country(amount, year:str, from_currency, to_country, rates_df: pd.DataFrame, missing_default = np.nan):
+    """
+    This function takes in a amount converts agiven currency to a the currency of a given country, to_country. 
+    :param amount: the amount in the from_currency
+    :param year: the year of the exchange rate
+    :param from_currency: the currency code of the amount
+    :param to_country: the ISO 3166-1 alpha-2 country code
+    :param rates_df: the dataframe of exchange rates
+    :param missing_default: the default value to return if the exchange rate is not found
+    :return: the equivalent amount in the currency of the to_country
+    """
+    if not to_country:
+        return missing_default
+    
+    if len(to_country) == 3:
+        to_country = convert_country_alpha3_to_alpha2(to_country)
+    
+    #convert to usd
+    usd_amount = currency_exchanged_to_usd(amount=amount,year=year, currency_code=from_currency, rates_df=rates_df, missing_default=missing_default)
+    if np.isnan(usd_amount):
+        return missing_default
+    
+    #convert to country currency
+    amount_in_country_currency = usd_exchanged_to_currency(usd_amount, year, to_country, rates_df, missing_default)
+    return amount_in_country_currency
 
 def adjust_usd_to_2023_usd(old_usd: float, year: str) -> float:
     """
@@ -83,19 +206,28 @@ def adjust_usd_to_2023_usd(old_usd: float, year: str) -> float:
 
     return old_usd * cpi_inflation_factors[year]
 
-def ppp_factor(country: str, year: str, ppp: pd.DataFrame) -> float:
-    try:
-        factor = float(ppp.loc[country, year])
-    except:
-        factor = ppp.loc[country, year].min().value()
-    
-    return factor
-
+def generate_exchange_rates_df(imf_data_filepath = 'data/DP_LIVE_07022024070906417.csv'):
+    """
+    OECD (2024), Exchange rates (indicator). doi: 10.1787/037ed317-en (Accessed on 06 February 2024)
+    :param imf_data_filepath: the file path to the csv file
+    :return: a dataframe of the exchange rates
+    """
+    exchange_rate_df = pd.read_csv(imf_data_filepath)
+    exchange_rate_df.columns = exchange_rate_df.columns.str.lower()
+    exchange_rate_df['time'] = exchange_rate_df['time'].astype(str)
+    exchange_rate_df = exchange_rate_df[exchange_rate_df['time'].isin(YEARS_OF_INTEREST)]
+    exchange_rate_df = exchange_rate_df.rename(columns={'time': 'year'}) # rename time to year
+    exchange_rate_df['country'] = exchange_rate_df['location'].apply(lambda x: convert_country_alpha3_to_alpha2(x, default=np.nan))
+    exchange_rate_df = exchange_rate_df.rename(columns={'location': 'currency_code'}) # rename location to currency_code
+    exchange_rate_df['currency_code'] = exchange_rate_df['currency_code'].replace({'EA19':'EUR'}) # replace EA19 with EUR which is the ISO 4217 code for the Euro
+    #exchange_rate_df = exchange_rate_df.set_index(['time', 'location'])
+    return exchange_rate_df
 
 def read_ppp(csv_filepath="data/imf-dm-export-20240204.csv"):
     """
     creates a dataframe of the ppp factors
     :param csv_filepath: the file path to the csv file
+    :return: a dataframe of the ppp factors
     """
     imf_ppp_df = pd.read_csv(csv_filepath)
     imf_ppp_df = imf_ppp_df.drop(imf_ppp_df.index[0])
@@ -111,6 +243,62 @@ def read_ppp(csv_filepath="data/imf-dm-export-20240204.csv"):
     imf_ppp_df['country'] = imf_ppp_df['country_full_name'].apply(get_country_code)
     return imf_ppp_df
 
+
+def get_2023_usd_equivalent(year: str, country_code: str, salary_val, ppp_df: pd.DataFrame):
+    """
+    Get the equivalent salary in 2023 USD for a given year and country code
+    :param year: year of the salary
+    :param country_code: country code of the salary
+    :param salary_val: salary value
+    :param ppp_df: DataFrame with OECD PPP values
+    :return: equivalent salary in 2023 USD
+    """
+    usd_2023_equivalent = np.nan
+    
+    try:
+        if country_code == 'US':
+            usd_equivalent = salary_val
+        else:
+            # get the ppp value for the country and year
+            ppp_values = ppp_df.loc[ppp_df['country'] == country_code, year].values
+            # if the ppp value is not found, return NaN
+            ppp_val = float(ppp_values[0]) if (len(ppp_values) > 0 and ppp_values[0] != 'no data') else np.nan
+            if np.isnan(ppp_val):
+                print(f"Country code {country_code} or year {year} not found in the PPP DataFrame") # for debugging
+                return np.nan
+            
+            usd_equivalent = salary_val / ppp_val
+        usd_2023_equivalent = adjust_usd_to_2023_usd(usd_equivalent, year)
+    
+    except Exception as e:
+        # if the exception is that the country code or year is not in the ppp_df then return NaN
+        if isinstance(e, KeyError):
+            print(f"Country code {country_code} or year {year} not found in the PPP DataFrame") # for debugging
+            pass
+
+        # if the exception is that the ppp_value is not a number then return NaN
+        if isinstance(e, ValueError):
+            if 'has dtype incompatible with int64' in str(e):
+                print("Caught the specific error: ", e)
+            print(f"Salary value {salary_val} is not a number") # for debugging
+            try:
+                salary_val = float(salary_val)
+                return get_2023_usd_equivalent(year, country_code, salary_val, ppp_df)
+            except Exception as e:
+                pass
+
+        else:
+            raise e
+ 
+    return usd_2023_equivalent
+
+def abbreviate_salary(amount):
+    if amount >= 1e6:
+        return '${:,.1f}M'.format(amount / 1e6)
+    elif amount >= 1e3:
+        return '${:,.0f}k'.format(amount / 1e3)
+    else:
+        return '${:,.0f}'.format(amount)
 
 class StackOverflowDataTester:
     """
@@ -255,6 +443,7 @@ class StackOverflowDataTester:
         try:
             json.dumps(metrics)  # Quick validation before writing
         except TypeError as e:
+            
             print(f"Error serializing the metrics: {e}")
             return
 
@@ -311,7 +500,7 @@ class PPPDataTester:
 
         # test existence of file with pytest
         assert os.path.exists(data_filepath), f"File {data_filepath} does not exist"
-        self.df = pd.read_csv(data_filepath, header=2)
+        self.df = read_ppp(data_filepath)
 
         #read json file into dictionary
         metrics_dict = {}
@@ -365,7 +554,7 @@ class PPPDataTester:
         if not os.path.exists(ppp_filename):
             raise FileNotFoundError(f"File {ppp_filename} does not exist")
 
-        df = pd.read_csv(ppp_filename, header=2)
+        df = read_ppp(ppp_filename)
         
         row_count = len(df)
         column_count = len(df.columns)
@@ -375,7 +564,8 @@ class PPPDataTester:
         year_sums = {}
         for year in YEARS_OF_INTEREST:
             if year in df.columns:
-                year_sums[year] = float(df[year].sum())
+                # Convert to numeric and sum, ignoring non-numeric values, eg 'no data'
+                year_sums[year] = pd.to_numeric(df[year], errors='coerce').sum()
             else:
                 year_sums[year] = None  # or 0, depending on how you want to handle missing years
         
@@ -575,10 +765,28 @@ class StackOverflowData:
             if 'ConvertedComp' in df.columns:
                 df = df.rename(columns={'ConvertedComp': 'ConvertedCompYearly'})
 
+            if 'CurrencySymbol' in df.columns:
+                df = df.rename(columns={'CurrencySymbol': 'Currency'})
+            else:
+                # currency code values need to be isolated.
+                # Column values examples: DKK\tDanish krone', 'AMD\tArmenian dram', 'XOF\tWest African CFA franc'
+                df['Currency'] = df['Currency'].fillna('').apply(lambda x: x.split('\t')[0] if '\t' in x else x)
+                
+            if not 'CompFreq' in df.columns:
+                df['CompFreq'] = 'Yearly'
+            
+            df.columns = df.columns.str.lower()
+            
+            # drop rows with missing values in devtype and salary columns
+            df = df.dropna(subset=["devtype", "convertedcompyearly"])
+            
+            # filter for only data science professionals
+            if only_data_science_devs:
+                df = df[df["devtype"].str.contains("data", case=False)]
+            
             # standardize some columns
             # using camel case resulted in errors with webframe where sometimes F was capitalized
             standard = ["language", "database", "platform", "webframe", "misctech"]
-            df.columns = df.columns.str.lower()
             for stan in standard:
                 if f"{stan}workedwith" in df.columns:
                     df = df.rename(columns={f'{stan}workedwith': f'{stan}haveworkedwith', f'{stan}desirenextyear':f'{stan}wanttoworkwith'})
@@ -588,16 +796,14 @@ class StackOverflowData:
             # standardize some country names, now they should match with Kaggle dataset
             df['original_country'] = df['country'].copy()
             country_list = [country.name for country in pycountry.countries]
-            get_country_code = lambda c: get_country_code_from_name(country_name=c, countries=country_list)
+            get_country_code = lambda c_name: get_country_code_from_name(country_name=c_name, countries=country_list)
             df["country"] = df["country"].apply(get_country_code)
 
             # we have some numbers so we can't just do entire df
             df[['edlevel', 'orgsize']] = df[['edlevel', 'orgsize']].fillna(value="nan")
             df['orgsize'] = df['orgsize'].replace({'I donâ\x80\x99t know': 'IDK'})
             
-            df = df.dropna(subset=["devtype", "convertedcompyearly"])
-            if only_data_science_devs:
-                df = df[df["devtype"].str.contains("data", case=False)]
+            
             df["count"] = [1] * len(df) # this is for our groupby so that we can say count > cull when we sum or count
             df["year"] = [year] * len(df)
             frames[f"df_data_{year}"] = df
@@ -608,10 +814,21 @@ class StackOverflowData:
         StackOverflowData.create_onehot_skills(frames)
         similar = StackOverflowData.find_similar_col(frames)
         
+        # multipliers to standardize compensation to yearly numbers
+        comp_multipliers = {
+            "Yearly": 1,
+            "Monthly": 12,
+            "Weekly": 52
+        }
+
         # finally going to standardize to merge devtypes
         for key, frame in frames.items():
             frames[key] = frame[similar]
         df = pd.concat([frame for key, frame in frames.items()], axis=0)
+        
+        # standardize compensation to yearly number in a new column, "compensation".
+        correct_comp = lambda row: row['comptotal'] * comp_multipliers[row['compfreq']]
+        df['compensation'] = df.apply(correct_comp, axis=1)
         df, employment = StackOverflowData.encode_devtype(df)
         skills = [col for col in df.columns if any(substr in col for substr in ['lg', 'db', 'pf', 'wf', 'mt'])]
         
@@ -664,6 +881,7 @@ class StackOverflowData:
                     new_cois.remove(abbr + "Empty")
                     new_cols += new_cois
                     frame = frame.drop(abbr + "Empty", axis=1)
+            
             # this needs to be here, if not throse Sparse type errors
             # # Sparse types don't allow normal groupby operations (ie reshape) so we need to turn them into ints
             # # int8 don't take up a ton and it's just 0's and 1's
@@ -782,11 +1000,37 @@ class StackOverflowData:
         df[new_cols] = df[new_cols].astype('int8')
         return df, new_cols
     
+    @staticmethod
+    def generate_2023_usd_comp(so_df: pd.DataFrame, rates_df: pd.DataFrame, ppp_factors_df: pd.DataFrame):
+        so_df['comp'] = so_df['compensation']
+        so_df.reset_index(inplace=True)
+        # validate that the currency is valid for the country
+        validate_currency = lambda row: row['currency'] not in get_currencies_for_country_cached(row['country'])
+        needing_correction = so_df.apply(validate_currency, axis=1)
+        fix_idx = needing_correction.loc[needing_correction].index
 
+        # fix the currency for the rows that need correction
+        fix_currency = lambda row: exchange_currency_to_country(amount=row['comp'],
+                                                                year=str(row['year']),
+                                                                from_currency=row['currency'],
+                                                                to_country=row['country'],
+                                                                rates_df=rates_df)
+        so_df.loc[fix_idx, 'comp'] = so_df.loc[fix_idx].apply(fix_currency, axis=1)
+        
+        # convert the compensation to 2023 USD equivalent
+        convert_usd = lambda row: get_2023_usd_equivalent(year=str(row["year"]),
+                                                          country_code=row["country"],
+                                                          salary_val=row["comp"],
+                                                          ppp_df=ppp_factors_df)
+        
+        so_df["usd_2023"] = so_df.apply(convert_usd, axis=1)
+        so_df.drop(columns=["comp"], inplace=True)
+        return so_df
 
 class AISalariesData:
     """
     Class to hold the AI Salaries data and perform various operations on it.
+    Based on data from https://ai-jobs.net/salaries/download/
     """
     
     @staticmethod
@@ -801,15 +1045,11 @@ class AISalariesData:
         Input: None
         Output: pd.DataFrame
         """
-        salaries = pd.read_csv(csv_filepath)
-        country_abbreviations = {country.alpha_2: country.alpha_3 for country in pycountry.countries}
-        mapping = AISalariesData.process_job_titles(salaries)
-        
-        salaries[["employee_residence", "company_location"]] = salaries[["employee_residence", "company_location"]].replace(country_abbreviations)
-        salaries["job_title"] = salaries["job_title"].replace(mapping)
-        salaries = salaries[salaries["work_year"] < 2024]
-        
-        return salaries
+        salaries_df = pd.read_csv(csv_filepath)
+        mapping = AISalariesData.process_job_titles(salaries_df)
+        salaries_df["job_title"] = salaries_df["job_title"].replace(mapping)
+        salaries_df = salaries_df[salaries_df["work_year"] < 2024]
+        return salaries_df
     
     @staticmethod
     def process_job_titles(salaries_df: pd.DataFrame) -> dict:
@@ -822,7 +1062,7 @@ class AISalariesData:
         mapping = {}
         for job in list(salaries_df["job_title"].unique()):
             if (short := "Analyst") in job:
-                mapping[job] = short.lower()
+                mapping[job] = short.lower() #TODO add AI and machine learning positions
         
             elif (short := "Engineer") in job:
                 mapping[job] = short.lower() + "_other"
@@ -846,9 +1086,42 @@ class AISalariesData:
                 mapping[job] = "scientist_other"
         return mapping
     
+    @staticmethod
+    def generate_2023_usd_comp(ai_sal_df: pd.DataFrame, rates_df: pd.DataFrame, ppp_factors_df: pd.DataFrame):
+        ai_sal_df['comp'] = ai_sal_df['salary']
+        ai_sal_df.reset_index(inplace=True)
+        
+        # validate that the currency is valid for the country
+        validate_currency = lambda row: row['salary_currency'] not in get_currencies_for_country_cached(row['company_location'])
+        needing_correction = ai_sal_df.apply(validate_currency, axis=1)
+        fix_idx = needing_correction.loc[needing_correction].index
+
+        # fix the currency for the rows that need correction
+        fix_currency = lambda row: exchange_currency_to_country(amount=row['comp'],
+                                                                year=str(row['work_year']),
+                                                                from_currency=row['salary_currency'],
+                                                                to_country=row['company_location'],
+                                                                rates_df=rates_df)
+        ai_sal_df.loc[fix_idx, 'comp'] = ai_sal_df.loc[fix_idx].apply(fix_currency, axis=1)
+        
+        # convert the compensation to 2023 USD equivalent
+        convert_usd = lambda row: get_2023_usd_equivalent(year=str(row["work_year"]),
+                                                          country_code=row["company_location"],
+                                                          salary_val=row["comp"],
+                                                          ppp_df=ppp_factors_df)
+        
+        ai_sal_df["usd_2023"] = ai_sal_df.apply(convert_usd, axis=1)
+        ai_sal_df.drop(columns=["comp"], inplace=True)
+        return ai_sal_df
+    
 
 if __name__ == "__main__":
     stack_overflow, skills_list, employments = StackOverflowData.generate_aggregate_df(only_data_science_devs=True)
-    stack_overflow.shape
+    exchange_rate_df = generate_exchange_rates_df()
     ppp_df = read_ppp()
-    print("completed")
+    stack_overflow = StackOverflowData.generate_2023_usd_comp(stack_overflow, exchange_rate_df, ppp_df)
+    
+    ai_salaries_df = AISalariesData.generate_df()
+    ai_salaries_df = AISalariesData.generate_2023_usd_comp(ai_salaries_df, exchange_rate_df, ppp_df)
+    ai_salaries_df['usd_2023'].describe()
+
