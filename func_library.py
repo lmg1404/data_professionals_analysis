@@ -73,7 +73,7 @@ def get_currencies_for_country(country_code):
         
         except Exception as e:
             if isinstance(e, KeyError):
-                print(f"Country code {country_code} not found in pycountry")
+                # print(f"Country code {country_code} not found in pycountry")
                 return currencies
                             
 @lru_cache(maxsize=None)
@@ -264,7 +264,7 @@ def get_2023_usd_equivalent(year: str, country_code: str, salary_val, ppp_df: pd
             # if the ppp value is not found, return NaN
             ppp_val = float(ppp_values[0]) if (len(ppp_values) > 0 and ppp_values[0] != 'no data') else np.nan
             if np.isnan(ppp_val):
-                print(f"Country code {country_code} or year {year} not found in the PPP DataFrame") # for debugging
+                # print(f"Country code {country_code} or year {year} not found in the PPP DataFrame") # for debugging
                 return np.nan
             
             usd_equivalent = salary_val / ppp_val
@@ -273,14 +273,14 @@ def get_2023_usd_equivalent(year: str, country_code: str, salary_val, ppp_df: pd
     except Exception as e:
         # if the exception is that the country code or year is not in the ppp_df then return NaN
         if isinstance(e, KeyError):
-            print(f"Country code {country_code} or year {year} not found in the PPP DataFrame") # for debugging
+            # print(f"Country code {country_code} or year {year} not found in the PPP DataFrame") # for debugging
             pass
 
         # if the exception is that the ppp_value is not a number then return NaN
         if isinstance(e, ValueError):
             if 'has dtype incompatible with int64' in str(e):
                 print("Caught the specific error: ", e)
-            print(f"Salary value {salary_val} is not a number") # for debugging
+            # print(f"Salary value {salary_val} is not a number") # for debugging
             try:
                 salary_val = float(salary_val)
                 return get_2023_usd_equivalent(year, country_code, salary_val, ppp_df)
@@ -965,7 +965,7 @@ class StackOverflowData:
             devtype = set()
             for category in category_list:
                 if (clean := "data scientist") in category.lower():
-                    devtype.add(clean)
+                    devtype.add("_".join(clean.lower().split(" ")))
                 elif "math" in category.lower() or "stat" in category.lower():
                     devtype.add("mathematician_statistician")
                 elif (clean := "analyst") in category.lower():
@@ -1047,7 +1047,7 @@ class AISalariesData:
         """
         salaries_df = pd.read_csv(csv_filepath)
         mapping = AISalariesData.process_job_titles(salaries_df)
-        salaries_df["job_title"] = salaries_df["job_title"].replace(mapping)
+        salaries_df["job_title"] = salaries_df["job_title"].replace(mapping)        
         salaries_df = salaries_df[salaries_df["work_year"] < 2024]
         return salaries_df
     
