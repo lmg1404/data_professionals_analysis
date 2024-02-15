@@ -8,6 +8,7 @@ from countryinfo import CountryInfo
 from functools import lru_cache
 from rapidfuzz import process
 from sklearn.preprocessing import MultiLabelBinarizer, LabelBinarizer
+from typing import Tuple, List
 
 YEARS_OF_INTEREST = ["2019", "2020", "2021", "2022", "2023"]
 
@@ -23,6 +24,17 @@ COLOR_THEME = {
     'green': "#A5A508", # Wavefield Green
     'alt_blue': '#4A9CE9', # Arbor Blue
 }
+
+
+def cull_country(frame: pd.DataFrame, cull_factor=20) -> List:
+    """
+    Given a particular minimum (cull_factor) find the countries in common among
+    frames.
+    """
+    union = []
+    grouped = frame.groupby("country").count()
+    grouped = grouped[grouped["year"] > cull_factor]
+    return list(grouped.index)
 
 def fuzzy_country_match(name, countries_list, threshold_distance=80):
     """
@@ -93,7 +105,7 @@ def get_currencies_for_country(country_code):
         
         except Exception as e:
             if isinstance(e, KeyError):
-                print(f"Country code {country_code} not found in pycountry")
+                #print(f"Country code {country_code} not found in pycountry")
                 return currencies
                             
 @lru_cache(maxsize=None)
@@ -290,7 +302,7 @@ def get_2023_usd_equivalent(year: str, country_code: str, salary_val, ppp_df: pd
             # if the ppp value is not found, return NaN
             ppp_val = float(ppp_values[0]) if (len(ppp_values) > 0 and ppp_values[0] != 'no data') else np.nan
             if np.isnan(ppp_val):
-                print(f"Country code {country_code} or year {year} not found in the PPP DataFrame") # for debugging
+                #print(f"Country code {country_code} or year {year} not found in the PPP DataFrame") # for debugging
                 return np.nan
             
             usd_equivalent = salary_val / ppp_val
@@ -299,14 +311,15 @@ def get_2023_usd_equivalent(year: str, country_code: str, salary_val, ppp_df: pd
     except Exception as e:
         # if the exception is that the country code or year is not in the ppp_df then return NaN
         if isinstance(e, KeyError):
-            print(f"Country code {country_code} or year {year} not found in the PPP DataFrame") # for debugging
+            #print(f"Country code {country_code} or year {year} not found in the PPP DataFrame") # for debugging
             pass
 
         # if the exception is that the ppp_value is not a number then return NaN
         if isinstance(e, ValueError):
             if 'has dtype incompatible with int64' in str(e):
-                print("Caught the specific error: ", e)
-            print(f"Salary value {salary_val} is not a number") # for debugging
+                #print("Caught the specific error: ", e)
+                pass
+            #print(f"Salary value {salary_val} is not a number") # for debugging
             try:
                 salary_val = float(salary_val)
                 return get_2023_usd_equivalent(year, country_code, salary_val, ppp_df)
@@ -330,6 +343,31 @@ def abbreviate_salary(amount):
         return '${:,.0f}k'.format(amount / 1e3)
     else:
         return '${:,.0f}'.format(amount)
+    
+
+def get_similar_countries(df: pd.DataFrame, want: int = 10) -> list:
+    """
+    Get the number of countries that we want so we can index for ANOVA
+    Consistent across the years for a good comparison
+    :param df: the data frame
+    :param want: the number of countries we want
+    """
+    groupped = df.groupby('year')
+    loc_list = list()
+    head = want
+    
+    while len(loc_list) < want:
+        loc_set = set()
+        for year, frame in groupped:
+            grouped = frame.groupby("country").size().sort_values(ascending=False)
+            if not loc_set:
+                loc_set = set(grouped.head(head).index)
+                continue
+            temp_set = set(grouped.head(head).index)
+            loc_set = loc_set.intersection(temp_set)
+        loc_list = list(loc_set)
+        head += 1
+    return loc_list
 
 class StackOverflowDataTester:
     """
@@ -791,7 +829,7 @@ class StackOverflowData:
     """
 
     @staticmethod
-    def generate_aggregate_df(only_data_science_devs=True) -> (pd.DataFrame, list, list):
+    def generate_aggregate_df(only_data_science_devs=True) -> Tuple:
         """
         Reads CSVs and gets the numbe of data professionals. Any empty values are dropped from job title and 
         salary so we will always have data. Other columns may have nans.
@@ -1019,7 +1057,7 @@ class StackOverflowData:
         return list(standard)
 
     @staticmethod
-    def encode_devtype(df: pd.DataFrame) -> (pd.DataFrame, list):
+    def encode_devtype(df: pd.DataFrame) -> Tuple:
         """
         Standardizing DevType so that we can merge on ai-net data
         """
@@ -1027,7 +1065,7 @@ class StackOverflowData:
             devtype = set()
             for category in category_list:
                 if (clean := "data scientist") in category.lower():
-                    devtype.add(clean)
+                    devtype.add("_".join(clean.lower().split(" ")))
                 elif "math" in category.lower() or "stat" in category.lower():
                     devtype.add("mathematician_statistician")
                 elif (clean := "analyst") in category.lower():
