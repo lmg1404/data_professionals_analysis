@@ -1,2 +1,3 @@
-We have almost 1GB of data.
-Data we conducted analysis on can be found here: https://drive.google.com/drive/folders/1YeJRxrjoA_IoUuUJXHDIX85_un1zxBAW?usp=sharing
+We have almost 1GB of data so sampled were provided per the class website.
+Data we conducted analysis on can be found here for full analysis: 
+https://drive.google.com/drive/folders/1YeJRxrjoA_IoUuUJXHDIX85_un1zxBAW?usp=sharing
