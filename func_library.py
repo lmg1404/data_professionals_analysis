@@ -12,13 +12,16 @@ from sklearn.preprocessing import MultiLabelBinarizer, LabelBinarizer
 YEARS_OF_INTEREST = ["2019", "2020", "2021", "2022", "2023"]
 
 COLOR_THEME = {
-    'text': '#2E282A', # Raisin Black
-    'background': '#FFE4E1', # Misty Rose
-    'primary': '#9DBF9E', # Cambridge Blue
-    'secondary': '#D5A021', # Goldenrod
-    'light_accent': '#7FB7BE', # Moonstone Blue
-    'bold': '#BC2C1A', # Engineer's Red
-    'alt_background': '#C3B1E1' # Wisteria
+    'text': '#131516', # Raisin Black
+    'background': '#E9E9E9', # February Grey
+    'primary': '#00274C', # Blue
+    'secondary': '#FFCB05', # Maize
+    'light_accent': '#1779BA', # Honolulu Blue
+    'bold': '#D86018', # Ross Orange
+    'alt_background': '#FAFAFA', # Base White
+    'alt_bold': "#A52F23", # Tappan Red
+    'green': "#A5A508", # Wavefield Green
+    'alt_blue': '#4A9CE9', # Arbor Blue
 }
 
 def fuzzy_country_match(name, countries_list, threshold_distance=80):
@@ -39,6 +42,12 @@ def fuzzy_country_match(name, countries_list, threshold_distance=80):
     return closest_match[0] if closest_match else None
 
 def convert_country_alpha3_to_alpha2(alpha_3_code, default=None):
+    """
+    Given a country's ISO 3166-1 alpha-3 code, returns the corresponding alpha-2 code.
+    :param alpha_3_code: The ISO 3166-1 alpha-3 code of the country.
+    :param default: The default value to return if the alpha-3 code is not found.
+    :return: The ISO 3166-1 alpha-2 code of the country, or the default value if not found.
+    """
     country = pycountry.countries.get(alpha_3=alpha_3_code)
     if country:
         return country.alpha_2
@@ -46,6 +55,12 @@ def convert_country_alpha3_to_alpha2(alpha_3_code, default=None):
         return default
     
 def convert_country_alpha2_to_alpha3(alpha_2_code, default=None):
+    """
+    Given a country's ISO 3166-1 alpha-2 code, returns the corresponding alpha-3 code.
+    :param alpha_2_code: The ISO 3166-1 alpha-2 code of the country.
+    :param default: The default value to return if the alpha-2 code is not found.
+    :return: The ISO 3166-1 alpha-3 code of the country, or the default value if not found.
+    """
     country = pycountry.countries.get(alpha_2=alpha_2_code)
     if country:
         return country.alpha_3
@@ -54,7 +69,12 @@ def convert_country_alpha2_to_alpha3(alpha_2_code, default=None):
 
 
 def get_currencies_for_country(country_code):
-    """Get currency code from country code"""
+    """
+    Given a country's ISO 3166-1 alpha-2 code, returns the currency used in that country.
+    :param country_code: The ISO 3166-1 alpha-2 code of the country.
+    :return: List of the currencies used in the country, or an empty list if not found.
+    """
+
     currencies = []
     try:
         currencies = CountryInfo(country_code).currencies()
@@ -139,6 +159,12 @@ def currency_exchanged_to_usd(amount, year:str, currency_code, rates_df: pd.Data
     """
     This function takes in a amount in a currency, a year, a currency code, and a dataframe of exchange rates.
     It returns the equivalent amount in USD.
+    :param amount: the amount in the given currency
+    :param year: the year of the exchange rate
+    :param currency_code: the currency code of the amount
+    :param rates_df: the dataframe of exchange rates
+    :param missing_default: the default value to return if the exchange rate is not found
+    :return: the equivalent amount in USD
     """
     if currency_code == 'USD':
         return amount
@@ -293,6 +319,11 @@ def get_2023_usd_equivalent(year: str, country_code: str, salary_val, ppp_df: pd
     return usd_2023_equivalent
 
 def abbreviate_salary(amount):
+    """
+    Abbreviates a salary amount to a more human-readable format
+    :param amount: the salary amount
+    :return: the salary string in abbreviated format
+    """
     if amount >= 1e6:
         return '${:,.1f}M'.format(amount / 1e6)
     elif amount >= 1e3:
@@ -364,11 +395,17 @@ class StackOverflowDataTester:
         self.expected_missing_vals_count = metrics_dict["missing_vals_count"]
 
     def _test_dims(self):
+        """
+        Tests if the dimensions of the DataFrame match the expected row and column counts.
+        """
         rows, cols = self.df.shape
         assert rows == self.row_count, f"Row count does not match. Expected {self.row_count}, got {rows}"
         assert cols == self.column_count, f"Column count does not match. Expected {self.column_count}, got {cols}"
 
     def _test_column_names(self):
+        """
+        Tests if the column names in the DataFrame match the expected column names.
+        """
         actual_col_names = set([str(c)for c in self.df.columns.to_list()])
         expected_col_names = set(self.expected_column_names)
         
@@ -379,10 +416,16 @@ class StackOverflowDataTester:
         assert not unexpected_cols, f"Found unexpected columns: {unexpected_cols}"
 
     def _test_nan_count(self):
+        """
+        Tests if the count of missing values in the DataFrame matches the expected count.
+        """
         nan_count = self.df.isna().sum().sum()
         assert nan_count == self.expected_missing_vals_count, f"Missing values count does not match. Expected {self.expected_missing_vals_count}, got {nan_count}"
 
     def _test_comp_total_stats(self):
+        """
+        Tests if the descriptive statistics for the 'CompTotal' column match the expected metrics.
+        """
         comp_total_stats = self.df["CompTotal"].describe()
 
         stats_to_check = ['mean', 'std', 'min', '25%', '50%', '75%', 'max']
@@ -390,6 +433,9 @@ class StackOverflowDataTester:
             assert comp_total_stats[stat] == self.comp_total_metrics[stat], f"CompTotal {stat} does not match. Expected {self.comp_total_metrics[stat]}, got {comp_total_stats[stat]}"
 
     def perform_tests(self):
+        """
+        Performs all tests for the Stack Overflow survey data.
+        """
         self._test_dims()
         self._test_column_names()
         self._test_nan_count()
@@ -400,6 +446,8 @@ class StackOverflowDataTester:
     def update_test_metrics_json(stack_overflow_data_location, data_metrics_json_path):
         """
         Update the JSON file with test metrics for the Stack Overflow survey data.
+        :param stack_overflow_data_location: The location of the Stack Overflow survey data.
+        :param data_metrics_json_path: The file path to the JSON file where the metrics will be stored.
         """
 
         try:
@@ -514,20 +562,32 @@ class PPPDataTester:
         self.expected_year_sums = metrics_dict["year_sums"]
 
     def _test_dims(self):
+        """
+        Tests if the dimensions of the DataFrame match the expected row and column counts.
+        """
         rows, cols = self.df.shape
         assert rows == self.expected_row_count, f"Row count does not match. Expected {self.expected_row_count}, got {rows}"
         assert cols == self.expected_column_count, f"Column count does not match. Expected {self.expected_column_count}, got {cols}"
     
     def _test_nan_count(self):
+        """
+        Tests if the count of missing values in the DataFrame matches the expected count.
+        """
         nan_count = self.df.isna().sum().sum()
         assert nan_count == self.expected_missing_vals_count, f"Missing values count does not match. Expected {self.expected_missing_vals_count}, got {nan_count}"
     
     def _test_year_sums(self):
+        """
+        Tests if the sums of PPP values for specified years match the expected sums.
+        """
         for year, expected_sum in self.expected_year_sums.items():
             actual_sum = self.df[year].sum()
             assert actual_sum == expected_sum, f"Yearly sum does not match. Expected {expected_sum}, got {actual_sum}"
     
     def perform_tests(self):
+        """
+        Performs all tests for the OECD PPP data.
+        """
         self._test_dims()
         self._test_nan_count()
         self._test_year_sums()
@@ -537,6 +597,8 @@ class PPPDataTester:
     def update_ppp_metrics_json(ppp_data_location, data_metrics_json_path):
         """
         Update the JSON file with test metrics for the OECD PPP data.
+        :param ppp_data_location: The location of the PPP data file.
+        :param data_metrics_json_path: The file path to the JSON file where the metrics will be stored.
         """
 
         try:
@@ -1004,6 +1066,7 @@ class StackOverflowData:
     def generate_2023_usd_comp(so_df: pd.DataFrame, rates_df: pd.DataFrame, ppp_factors_df: pd.DataFrame):
         so_df['comp'] = so_df['compensation']
         so_df.reset_index(inplace=True)
+        
         # validate that the currency is valid for the country
         validate_currency = lambda row: row['currency'] not in get_currencies_for_country_cached(row['country'])
         needing_correction = so_df.apply(validate_currency, axis=1)
