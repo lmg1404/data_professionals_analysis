@@ -1,4 +1,4 @@
-## About/TDLR
+## About/TLDR
 As the landscape of data professionals evolves, the recent surge in job opportunities has not been accompanied by a comprehensive analysis of global trends.
 To address this gap, our analysis leveraged data from StackOverflow and AI-salaries.net as proxies and, we normalized salaries using Purchasing Power Parity (PPP) to ensure accurate comparisons.
 
