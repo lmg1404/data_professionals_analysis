@@ -5,3 +5,6 @@ To address this gap, our analysis leveraged data from StackOverflow and AI-salar
 Our findings reveal intriguing insights, particularly highlighting certain countries that exhibit a remarkable susceptibility to changes. 
 Notably, Argentina and Russia stand out, experiencing staggering percentage changes throughout the 2019-2023 timeframe we chose.
 These fluctuations can be attributed to discernible economic factors, which we go into more detail in [analysis.ipynb](/src/analysis.ipynb).
+
+#### Note about Analysis.ipynb
+It can be interactive if you change the country number in the `find_similar_country(x)` by changing x the analysis of the notebook changes.
