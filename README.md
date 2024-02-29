@@ -7,4 +7,4 @@ Notably, Argentina and Russia stand out, experiencing staggering percentage chan
 These fluctuations can be attributed to discernible economic factors, which we go into more detail in [analysis.ipynb](/src/analysis.ipynb).
 
 #### Note about Analysis.ipynb
-It can be interactive if you change the country number in the `find_similar_country(x)` by changing x the analysis of the notebook changes.
+It can be interactive if you change the country number in the `get_similar_countries(merged, x)` by changing x the analysis of the notebook changes due to a higher number of countries. We chose 20 in this repo since it's much easier to see comparisons without being overwhelmed of say 100 countries.
